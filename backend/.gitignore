@@ -1,0 +1,48 @@
+# Environment variables (CRITICAL - Contains API keys!)
+.env
+.env.local
+.env.*.local
+
+# Python virtual environment
+venv/
+env/
+ENV/
+.venv
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# User uploaded files (PDFs)
+docs/
+*.pdf
+
+# Vector store data
+faiss_index/
+*.faiss
+*.pkl
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+*.log
+
+# Pytest
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Distribution / packaging
+build/
+dist/
+*.egg-info/
