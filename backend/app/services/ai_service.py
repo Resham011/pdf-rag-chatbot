@@ -1,12 +1,13 @@
 import os
 import uuid
 import shutil
+import gc
 from dotenv import load_dotenv
 from fastapi import UploadFile
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import FAISS
-from langchain_huggingface import HuggingFaceEmbeddings
+from langchain_cohere import CohereEmbeddings  # FREE API embeddings
 from langchain_groq import ChatGroq
 from typing import Dict, List
 
@@ -22,19 +23,24 @@ class AIService:
         self.base_docs_folder = "docs"
         os.makedirs(self.base_docs_folder, exist_ok=True)
         
-        print("✅ Using Groq AI (FREE - Best Quality)")
+        print("✅ Using Groq + Cohere (100% FREE)")
 
-        # Shared embeddings
-        print("📥 Loading embedding model...")
-        self.embeddings = HuggingFaceEmbeddings(
-            model_name="sentence-transformers/all-MiniLM-L6-v2",
-            model_kwargs={'device': 'cpu'}
-        )
-        print("✅ Embeddings ready!")
-
-        # Shared LLM
-        groq_api_key = os.getenv("GROQ_API_KEY")
+        # FREE Cohere embeddings (1000 calls/month)
+        cohere_key = os.getenv("COHERE_API_KEY")
+        if not cohere_key:
+            raise ValueError(
+                "❌ COHERE_API_KEY not found!\n"
+                "Get FREE key at: https://dashboard.cohere.com/api-keys"
+            )
         
+        self.embeddings = CohereEmbeddings(
+            cohere_api_key=cohere_key,
+            model="embed-english-light-v3.0"  # Free tier model
+        )
+        print("✅ Cohere embeddings ready (FREE)!")
+
+        # FREE Groq LLM
+        groq_api_key = os.getenv("GROQ_API_KEY")
         if not groq_api_key:
             raise ValueError(
                 "❌ GROQ_API_KEY not found in .env file!\n"
@@ -59,10 +65,14 @@ class AIService:
             "vectorstore": None,
             "folder": session_folder,
             "files": [],
-            "chat_history": []  # Store chat messages
+            "chat_history": []  # Store chat messages for persistence
         }
         
         print(f"🆔 Created session: {session_id}")
+        
+        # Auto-cleanup old sessions to prevent memory bloat
+        self.cleanup_old_sessions(max_sessions=10)
+        
         return session_id
 
     async def process_pdf(self, session_id: str, file: UploadFile) -> bool:
@@ -122,6 +132,9 @@ class AIService:
             session["files"].append(file.filename)
             
             print(f"✅ [Session {session_id[:8]}] PDF processed successfully!")
+            
+            # Force garbage collection to free memory
+            gc.collect()
 
             return True
 
@@ -180,6 +193,7 @@ class AIService:
                     )
                     print(f"✅ [Session {session_id[:8]}] Vectorstore rebuilt")
             
+            gc.collect()
             return True
             
         except Exception as e:
@@ -276,7 +290,24 @@ Provide a detailed, accurate answer based on the context:"""
         # Remove session from memory
         del self.sessions[session_id]
         
+        # Force memory cleanup
+        gc.collect()
+        
         print(f"✅ [Session {session_id[:8]}] Session reset complete!")
+    
+    def cleanup_old_sessions(self, max_sessions: int = 5):
+        """Auto-delete old sessions to save memory (keeps most recent)"""
+        if len(self.sessions) > max_sessions:
+            # Get oldest sessions (all except last max_sessions)
+            all_session_ids = list(self.sessions.keys())
+            old_sessions = all_session_ids[:-max_sessions]
+            
+            for old_session_id in old_sessions:
+                print(f"🧹 Auto-cleaning old session: {old_session_id[:8]}")
+                self.reset_session(old_session_id)
+            
+            print(f"✅ Cleaned up {len(old_sessions)} old sessions, kept {max_sessions} most recent")
+
     
     def get_session_files(self, session_id: str) -> list:
         """Get list of files for a session"""
