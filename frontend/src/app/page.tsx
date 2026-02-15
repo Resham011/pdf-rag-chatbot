@@ -31,18 +31,22 @@ export default function Home() {
                });
                const data = await response.json();
                storedSessionId = data.session_id;
-               localStorage.setItem("pdf_chat_session_id", storedSessionId);
+               if (storedSessionId) {
+                    localStorage.setItem("pdf_chat_session_id", storedSessionId);
+               }
           } catch (error) {
                console.error("Failed to create session:", error);
                return;
           }
           }
           
-          setSessionId(storedSessionId);
-          console.log("Session ID:", storedSessionId);
-          
-          // Restore files and chat history from backend
-          await restoreSession(storedSessionId);
+          if (storedSessionId) {
+               setSessionId(storedSessionId);
+               console.log("Session ID:", storedSessionId);
+               
+               // Restore files and chat history from backend
+               await restoreSession(storedSessionId);
+          }
      };
 
      initSession();
