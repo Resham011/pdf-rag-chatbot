@@ -158,7 +158,7 @@ User Question → Embedding → Similarity Search → Top-K Chunks → LLM → A
 ## 🌍 Deployment
 
 - **Frontend** is deployed on [Vercel](https://vercel.com).
-- **Backend** can be deployed to any cloud provider (Railway, Render, AWS, etc.).
+- **Backend** is deployed on Render.
 
 Make sure to set the appropriate environment variables in your deployment platform.
 
