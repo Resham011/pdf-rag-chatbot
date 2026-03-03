@@ -59,9 +59,21 @@ async def ask_question(request: QuestionRequest, session_id: str = None):
     if not session_id:
         raise HTTPException(status_code=400, detail="Session ID required")
     
-    answer = ai_service.ask_question(session_id, request.question)
+    result = ai_service.ask_question(session_id, request.question)
     
-    return QuestionResponse(answer=answer)
+    return QuestionResponse(answer=result["answer"], sources=result["sources"])
+
+
+@router.post("/summarize")
+async def summarize_pdf(session_id: str = None):
+    """Summarize all uploaded PDFs for a specific session"""
+    
+    if not session_id:
+        raise HTTPException(status_code=400, detail="Session ID required")
+    
+    result = ai_service.summarize_pdf(session_id)
+    
+    return QuestionResponse(answer=result["answer"], sources=result["sources"])
 
 
 @router.post("/reset")
@@ -107,6 +119,7 @@ async def save_message(request: dict, session_id: str = None):
     
     question = request.get("question", "")
     answer = request.get("answer", "")
+    sources = request.get("sources", [])
     
-    ai_service.save_message(session_id, question, answer)
+    ai_service.save_message(session_id, question, answer, sources)
     return {"message": "Message saved"}

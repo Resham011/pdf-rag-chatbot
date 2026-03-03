@@ -200,15 +200,29 @@ class AIService:
             print(f"❌ [Session {session_id[:8]}] Error deleting file: {e}")
             return False
 
-    def ask_question(self, session_id: str, question: str) -> str:
-        """Ask question for a specific session"""
+    def _build_chat_history_context(self, chat_history: list, max_turns: int = 5) -> str:
+        """Build a string of recent chat history to include in the prompt"""
+        if not chat_history:
+            return ""
+        
+        # Take only the last max_turns exchanges to avoid token overflow
+        recent = chat_history[-max_turns:]
+        lines = []
+        for turn in recent:
+            lines.append(f"User: {turn['question']}")
+            lines.append(f"Assistant: {turn['answer']}")
+        
+        return "\n".join(lines)
+
+    def ask_question(self, session_id: str, question: str) -> dict:
+        """Ask question for a specific session. Returns answer + sources with page numbers."""
         if session_id not in self.sessions:
-            return "Session not found. Please upload a PDF first."
+            return {"answer": "Session not found. Please upload a PDF first.", "sources": []}
         
         session = self.sessions[session_id]
         
         if session["vectorstore"] is None:
-            return "Please upload a PDF first."
+            return {"answer": "Please upload a PDF first.", "sources": []}
 
         try:
             print(f"💬 [Session {session_id[:8]}] Processing question: {question}")
@@ -220,20 +234,37 @@ class AIService:
             # Combine context
             context = "\n\n".join([doc.page_content for doc in docs])
             
-            # Get source filenames
-            sources = list(set([
-                os.path.basename(doc.metadata.get("source", "Unknown"))
-                for doc in docs
-            ]))
+            # Build structured source list with filename + page number
+            seen = set()
+            sources = []
+            for doc in docs:
+                filename = os.path.basename(doc.metadata.get("source", "Unknown"))
+                # PyPDFLoader stores 0-based page index in metadata["page"]
+                page_num = doc.metadata.get("page", None)
+                page_label = f"p.{page_num + 1}" if page_num is not None else "unknown page"
+                key = f"{filename}:{page_label}"
+                if key not in seen:
+                    seen.add(key)
+                    sources.append({"file": filename, "page": page_label})
 
-            # Create prompt
-            prompt = f"""You are a helpful AI assistant. Answer the question based ONLY on the context provided below. 
+            # Build chat history context (last 5 turns)
+            history_context = self._build_chat_history_context(session["chat_history"])
+
+            # Create prompt with optional conversation history
+            history_section = ""
+            if history_context:
+                history_section = f"""Previous conversation:
+{history_context}
+
+"""
+
+            prompt = f"""You are a helpful AI assistant. Answer the question based ONLY on the context provided below.
 If the answer is not in the context, say "I cannot find that information in the documents."
 
-Context from documents ({', '.join(sources)}):
+{history_section}Context from documents ({', '.join(set(s['file'] for s in sources))}):
 {context}
 
-Question: {question}
+Current question: {question}
 
 Provide a detailed, accurate answer based on the context:"""
             
@@ -245,7 +276,7 @@ Provide a detailed, accurate answer based on the context:"""
             
             print(f"✅ [Session {session_id[:8]}] Answer generated!")
             
-            return answer
+            return {"answer": answer, "sources": sources}
             
         except Exception as e:
             error_msg = str(e)
@@ -254,16 +285,74 @@ Provide a detailed, accurate answer based on the context:"""
             traceback.print_exc()
             
             if "rate_limit" in error_msg.lower():
-                return "Too many requests. Please wait a moment and try again."
+                return {"answer": "Too many requests. Please wait a moment and try again.", "sources": []}
             
-            return f"Error generating answer. Please try again."
-    
-    def save_message(self, session_id: str, question: str, answer: str):
+            return {"answer": "Error generating answer. Please try again.", "sources": []}
+
+    def summarize_pdf(self, session_id: str) -> dict:
+        """Generate a summary of all uploaded PDFs in the session."""
+        if session_id not in self.sessions:
+            return {"answer": "Session not found. Please upload a PDF first.", "sources": []}
+        
+        session = self.sessions[session_id]
+        
+        if session["vectorstore"] is None or not session["files"]:
+            return {"answer": "Please upload a PDF first.", "sources": []}
+
+        try:
+            file_names = ", ".join(session["files"])
+            print(f"📝 [Session {session_id[:8]}] Summarizing: {file_names}")
+
+            # Retrieve a broad sample of chunks for summarization
+            retriever = session["vectorstore"].as_retriever(search_kwargs={"k": 10})
+            docs = retriever.invoke("main topics key points overview summary introduction conclusion")
+
+            context = "\n\n".join([doc.page_content for doc in docs])
+
+            # Build sources
+            seen = set()
+            sources = []
+            for doc in docs:
+                filename = os.path.basename(doc.metadata.get("source", "Unknown"))
+                page_num = doc.metadata.get("page", None)
+                page_label = f"p.{page_num + 1}" if page_num is not None else "unknown page"
+                key = f"{filename}:{page_label}"
+                if key not in seen:
+                    seen.add(key)
+                    sources.append({"file": filename, "page": page_label})
+
+            prompt = f"""You are a helpful AI assistant. Based on the document excerpts below, provide a clear and concise summary of the document(s).
+
+Structure your summary as:
+1. **Overview**: What the document is about (2-3 sentences)
+2. **Key Topics**: Main subjects covered (bullet points)
+3. **Important Points**: Notable findings, conclusions, or information (bullet points)
+
+Context from documents ({file_names}):
+{context}
+
+Provide a well-structured summary:"""
+
+            response = self.llm.invoke(prompt)
+            answer = response.content
+
+            print(f"✅ [Session {session_id[:8]}] Summary generated!")
+            return {"answer": answer, "sources": sources}
+
+        except Exception as e:
+            error_msg = str(e)
+            print(f"❌ [Session {session_id[:8]}] Summary error: {error_msg}")
+            if "rate_limit" in error_msg.lower():
+                return {"answer": "Too many requests. Please wait a moment and try again.", "sources": []}
+            return {"answer": "Error generating summary. Please try again.", "sources": []}
+
+    def save_message(self, session_id: str, question: str, answer: str, sources: list = None):
         """Save a chat message to session history"""
         if session_id in self.sessions:
             self.sessions[session_id]["chat_history"].append({
                 "question": question,
-                "answer": answer
+                "answer": answer,
+                "sources": sources or []
             })
             print(f"💾 [Session {session_id[:8]}] Message saved to history")
     
@@ -298,7 +387,6 @@ Provide a detailed, accurate answer based on the context:"""
     def cleanup_old_sessions(self, max_sessions: int = 5):
         """Auto-delete old sessions to save memory (keeps most recent)"""
         if len(self.sessions) > max_sessions:
-            # Get oldest sessions (all except last max_sessions)
             all_session_ids = list(self.sessions.keys())
             old_sessions = all_session_ids[:-max_sessions]
             
@@ -308,7 +396,6 @@ Provide a detailed, accurate answer based on the context:"""
             
             print(f"✅ Cleaned up {len(old_sessions)} old sessions, kept {max_sessions} most recent")
 
-    
     def get_session_files(self, session_id: str) -> list:
         """Get list of files for a session"""
         if session_id not in self.sessions:
