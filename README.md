@@ -182,7 +182,4 @@ This project is open source. See the [LICENSE](LICENSE) file for details.
 
 ---
 
-## 👤 Author
 
-**Resham011**  
-GitHub: [@Resham011](https://github.com/Resham011)
